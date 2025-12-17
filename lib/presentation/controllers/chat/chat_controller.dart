@@ -46,6 +46,11 @@ class ChatController extends BaseController {
 
   // Scroll controller for messages list (managed by controller for better control)
   final ScrollController scrollController = ScrollController();
+  
+  // Track pending messages to prevent duplicates
+  // Key: message content + type + timestamp (rounded to seconds)
+  // Value: temp message ID
+  final Map<String, String> _pendingMessages = {};
 
   // Computed
   bool get canSendMessage {
@@ -267,6 +272,7 @@ class ChatController extends BaseController {
     _cancelMessagesStream();
     scrollController.dispose();
     inputController.dispose();
+    _pendingMessages.clear(); // Clean up pending messages tracking
     super.onClose();
   }
 
@@ -386,7 +392,7 @@ class ChatController extends BaseController {
       }
       
       // Sort by timestamp
-      mergedMessages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+      deduplicatedMessages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
       
       if (kDebugMode) {
         print('  - Merged: ${mergedMessages.length} messages (${newMessages.length} from Firestore, ${localTempMessages.length} temp)');
@@ -394,7 +400,7 @@ class ChatController extends BaseController {
       }
       
       // Update messages list
-      messages.value = mergedMessages;
+      messages.value = deduplicatedMessages;
       
       // Update visible date if we have messages
       if (mergedMessages.isNotEmpty) {
@@ -663,33 +669,40 @@ class ChatController extends BaseController {
     if (userId == null) return;
 
     // Call backend API
+    // API returns: { "message": string, "thread_id": string }
     final response = await _chatApiService.sendMessageToAI(
       userId: userId!,
       message: message,
-      chatSessionId: 'session_001', // Hardcoded for testing
+      // chatSessionId is optional - API manages conversation history automatically
     );
 
-    // Check if API call was successful
-    if (response['success'] != true) {
-      throw Exception(response['error'] ?? 'Failed to get response from server');
-    }
-
     // Extract response data
-    // The API returns data in multiple possible formats:
-    // 1. Direct message field: {success: true, message: "...", ...}
-    // 2. Data message field: {success: true, data: {message: "...", ...}}
-    // 3. History array: {success: true, data: {history: [{content: "...", role: "assistant"}, ...]}}
+    // New API format: { "message": string, "thread_id": string }
+    // Also supports legacy formats for backward compatibility
     String aiResponseText = '';
+    String? threadId;
     
     if (kDebugMode) {
       print('🔍 Parsing API response...');
-      print('  - response[\'data\']: ${response['data']}');
-      print('  - response[\'data\'][\'message\']: ${response['data']?['message']}');
       print('  - response[\'message\']: ${response['message']}');
+      print('  - response[\'thread_id\']: ${response['thread_id']}');
+      print('  - response[\'data\']: ${response['data']}');
     }
     
-    // Try data.message field first (most common for first message)
-    if (response['data'] != null) {
+    // New API format: direct message field
+    if (response['message'] != null) {
+      aiResponseText = response['message'].toString();
+      threadId = response['thread_id']?.toString();
+      if (kDebugMode) {
+        print('✅ Found message in response[\'message\']: ${aiResponseText.substring(0, aiResponseText.length > 50 ? 50 : aiResponseText.length)}...');
+        if (threadId != null) {
+          print('✅ Thread ID: $threadId');
+        }
+      }
+    }
+    
+    // Fallback: Try data.message field (legacy format)
+    if (aiResponseText.isEmpty && response['data'] != null) {
       final data = response['data'] as Map<String, dynamic>?;
       if (data != null && data['message'] != null) {
         aiResponseText = data['message'].toString();
@@ -699,15 +712,7 @@ class ChatController extends BaseController {
       }
     }
     
-    // If still empty, try direct message field
-    if (aiResponseText.isEmpty && response['message'] != null) {
-      aiResponseText = response['message'].toString();
-      if (kDebugMode) {
-        print('✅ Found message in response[\'message\']: ${aiResponseText.substring(0, aiResponseText.length > 50 ? 50 : aiResponseText.length)}...');
-      }
-    }
-    
-    // If still empty, try extracting from history array
+    // Fallback: Try extracting from history array (legacy format)
     if (aiResponseText.isEmpty && response['data'] != null) {
       final data = response['data'] as Map<String, dynamic>?;
       if (data != null && data['history'] != null) {
@@ -730,10 +735,10 @@ class ChatController extends BaseController {
     
     if (kDebugMode) {
       print('✅ API Response received:');
-      print('  - Success: ${response['success']}');
       print('  - AI Message: ${aiResponseText.isNotEmpty ? aiResponseText.substring(0, aiResponseText.length > 50 ? 50 : aiResponseText.length) : "EMPTY"}...');
-      print('  - User Message ID: ${response['user_message_id']}');
-      print('  - AI Message ID: ${response['ai_message_id']}');
+      if (threadId != null) {
+        print('  - Thread ID: $threadId');
+      }
     }
     
     if (aiResponseText.isEmpty) {
@@ -976,6 +981,27 @@ class ChatController extends BaseController {
     return date1.year == date2.year &&
         date1.month == date2.month &&
         date1.day == date2.day;
+  }
+
+  /// Create a key for tracking pending messages
+  /// Format: "content|type|timestamp_rounded_to_seconds"
+  String _createPendingMessageKey(String content, String type, DateTime timestamp) {
+    // Round timestamp to seconds to allow matching within a time window
+    final roundedTimestamp = DateTime(
+      timestamp.year,
+      timestamp.month,
+      timestamp.day,
+      timestamp.hour,
+      timestamp.minute,
+      timestamp.second,
+    );
+    return '$content|$type|${roundedTimestamp.toIso8601String()}';
+  }
+
+  /// Create a key for message deduplication
+  /// Format: "content|type|timestamp"
+  String _createMessageKey(String content, String type, DateTime timestamp) {
+    return '$content|$type|${timestamp.toIso8601String()}';
   }
 
   /// Update visible date with context (for more accurate calculation)
