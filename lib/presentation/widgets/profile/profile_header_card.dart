@@ -5,7 +5,8 @@ import 'package:amorra/core/utils/app_spacing/app_spacing.dart';
 import 'package:amorra/core/utils/app_gradient/app_gradient.dart';
 import 'package:amorra/core/utils/app_colors/app_colors.dart';
 import 'package:amorra/presentation/widgets/common/user_avatar.dart';
-import 'package:amorra/presentation/widgets/common/app_loading_indicator.dart';
+import 'package:amorra/presentation/widgets/common/app_icon_button.dart';
+import 'package:amorra/presentation/widgets/common/app_dots_indicator.dart';
 import 'profile_name_display.dart';
 import 'profile_name_edit_field.dart';
 
@@ -134,32 +135,12 @@ class _ProfileHeaderCardState extends State<ProfileHeaderCard> {
                 Positioned(
                   bottom: 0,
                   right: 0,
-                  child: GestureDetector(
-                    onTap: widget.isUploadingImage ? null : widget.onUploadImage,
-                    child: Container(
-                      width: AppResponsive.iconSize(context, factor: 1.5),
-                      height: AppResponsive.iconSize(context, factor: 1.5),
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: AppColors.white,
-                        boxShadow: [
-                          BoxShadow(
-                            color: AppColors.black.withValues(alpha: 0.2),
-                            blurRadius: 4,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: widget.isUploadingImage
-                          ? const Center(
-                              child: AppLoadingIndicator(),
-                            )
-                          : Icon(
-                              Iconsax.camera,
-                              color: AppColors.primary,
-                              size: AppResponsive.iconSize(context, factor: 0.8),
-                            ),
-                    ),
+                  child: AppIconButton(
+                    icon: Iconsax.camera,
+                    onTap: widget.onUploadImage,
+                    isLoading: widget.isUploadingImage,
+                    backgroundColor: AppColors.white,
+                    iconColor: AppColors.primary,
                   ),
                 ),
               
@@ -176,21 +157,13 @@ class _ProfileHeaderCardState extends State<ProfileHeaderCard> {
                       color: AppColors.black.withValues(alpha: 0.5),
                       borderRadius: BorderRadius.circular(20),
                     ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: List.generate(2, (index) {
-                        return Container(
-                          width: 6,
-                          height: 6,
-                          margin: const EdgeInsets.symmetric(horizontal: 3),
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: widget.currentImageIndex == index
-                                ? AppColors.white
-                                : AppColors.white.withValues(alpha: 0.5),
-                          ),
-                        );
-                      }),
+                    child: AppDotsIndicator(
+                      totalPages: 2,
+                      currentPage: widget.currentImageIndex,
+                      activeColor: AppColors.white,
+                      inactiveColor: AppColors.white.withValues(alpha: 0.5),
+                      dotSize: 6,
+                      activeDotWidth: 6, // Keep same size for both active and inactive
                     ),
                   ),
                 ),
