@@ -99,7 +99,7 @@ class ProfileScreen extends GetView<ProfileController> {
                         // Subscription Card
                         Obx(() => ProfileSubscriptionCard(
                               isSubscribed: controller.isSubscribed,
-                              remainingMessages: controller.remainingFreeMessages,
+                              remainingMessages: controller.remainingFreeMessagesReactive.value,
                               usedMessages: controller.usedMessages,
                               dailyLimit: controller.dailyLimit,
                               nextBillingDate: controller.nextBillingDate,

@@ -34,10 +34,10 @@ class ProfileController extends BaseController {
   final TextEditingController nameController = TextEditingController();
   final RxBool isLogoutLoading = false.obs;
   final RxBool isDeleteAccountLoading = false.obs;
-  
-  // Image upload state
+
   final RxBool isUploadingImage = false.obs;
   final RxInt currentImageIndex = 0.obs; // 0 = avatar, 1 = profile image
+  final RxInt remainingFreeMessagesReactive = AppConfig.freeMessageLimit.obs;
 
   // Get AuthController
   AuthController? get _authController {
@@ -65,6 +65,7 @@ class ProfileController extends BaseController {
     super.onInit();
     _loadUserData();
     _setupUserListener();
+    _setupSubscriptionListener();
   }
 
   @override
@@ -84,7 +85,7 @@ class ProfileController extends BaseController {
         }
         return;
       }
-      
+
       ever(authController.currentUser, (UserModel? updatedUser) {
         if (updatedUser != null) {
           user.value = updatedUser;
@@ -95,6 +96,8 @@ class ProfileController extends BaseController {
         } else {
           user.value = null;
           currentImageIndex.value = 0;
+          // Update remaining messages when user changes
+          _updateRemainingMessages();
         }
       });
 
@@ -113,6 +116,71 @@ class ProfileController extends BaseController {
     }
   }
 
+  /// Setup listener for subscription controller changes
+  void _setupSubscriptionListener() {
+    try {
+      final subscriptionController = _subscriptionController;
+      if (subscriptionController == null) {
+        if (kDebugMode) {
+          print('⚠️ SubscriptionController not available in ProfileController');
+        }
+        return;
+      }
+
+      // Listen to remainingFreeMessages changes
+      ever(subscriptionController.remainingFreeMessages, (int remaining) {
+        remainingFreeMessagesReactive.value = remaining;
+      });
+
+      // Listen to isSubscribed changes
+      ever(subscriptionController.isSubscribed, (bool subscribed) {
+        // Update remaining messages when subscription status changes
+        _updateRemainingMessages();
+      });
+
+      // Listen to isWithinFreeTrial changes
+      ever(subscriptionController.isWithinFreeTrial, (bool inTrial) {
+        // Update remaining messages when trial status changes
+        _updateRemainingMessages();
+      });
+
+      // Set initial value
+      _updateRemainingMessages();
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error setting up subscription listener: $e');
+      }
+    }
+  }
+
+  /// Update remaining messages based on current state
+  void _updateRemainingMessages() {
+    // Check subscription status first - subscribed users have unlimited
+    if (isSubscribed) {
+      remainingFreeMessagesReactive.value = 999;
+      return;
+    }
+
+    final currentUser = user.value;
+    final isInTrial = currentUser != null &&
+        FreeTrialUtils.isWithinFreeTrial(currentUser);
+
+    // If in free trial, return unlimited indicator
+    if (isInTrial) {
+      remainingFreeMessagesReactive.value = 999;
+      return;
+    }
+
+    // Get from subscription controller
+    final subscriptionController = _subscriptionController;
+    if (subscriptionController != null) {
+      remainingFreeMessagesReactive.value =
+          subscriptionController.remainingFreeMessages.value;
+    } else {
+      remainingFreeMessagesReactive.value = AppConfig.freeMessageLimit;
+    }
+  }
+
   /// Load user data
   Future<void> _loadUserData() async {
     try {
@@ -125,7 +193,7 @@ class ProfileController extends BaseController {
         setError('AuthController not available');
         return;
       }
-      
+
       final currentUser = authController.currentUser.value;
       if (currentUser != null) {
         user.value = currentUser;
@@ -176,7 +244,7 @@ class ProfileController extends BaseController {
     if (user.value == null) return;
 
     final newName = nameController.text.trim();
-    
+
     // Use Validators to validate name
     final nameValidationError = Validators.validateName(newName);
     if (nameValidationError != null) {
@@ -335,7 +403,7 @@ class ProfileController extends BaseController {
           showError(
             'Invalid Password',
             subtitle:
-                'The password you entered is incorrect. Please try again.',
+            'The password you entered is incorrect. Please try again.',
           );
         } else {
           showError(
@@ -377,39 +445,29 @@ class ProfileController extends BaseController {
   bool get isSubscribed {
     // First check subscription controller, then fallback to user model
     final subscriptionController = _subscriptionController;
-    if (subscriptionController != null && subscriptionController.isSubscribed.value) {
+    if (subscriptionController != null &&
+        subscriptionController.isSubscribed.value) {
       return true;
     }
     // Fallback to user model subscription status
     return user.value?.isSubscribed ?? false;
   }
 
-  /// Get remaining free messages
-  int get remainingFreeMessages {
-    // Check subscription status first - subscribed users have unlimited
-    if (isSubscribed) return 999;
-    
-    final currentUser = user.value;
-    final isInTrial = currentUser != null && FreeTrialUtils.isWithinFreeTrial(currentUser);
-    
-    // If in free trial, return unlimited indicator
-    if (isInTrial) return 999;
-    
-    return _subscriptionController?.remainingFreeMessages.value ??
-        AppConfig.freeMessageLimit;
-  }
+  /// Get remaining free messages (reactive)
+  int get remainingFreeMessages => remainingFreeMessagesReactive.value;
 
   /// Get used messages (for progress indicator)
   int get usedMessages {
     // Subscribed users have unlimited, so no usage tracking
     if (isSubscribed) return 0;
-    
+
     final currentUser = user.value;
-    final isInTrial = currentUser != null && FreeTrialUtils.isWithinFreeTrial(currentUser);
-    
+    final isInTrial = currentUser != null &&
+        FreeTrialUtils.isWithinFreeTrial(currentUser);
+
     // If in free trial, return 0 (no usage tracking)
     if (isInTrial) return 0;
-    
+
     return AppConfig.freeDailyLimit - remainingFreeMessages;
   }
 
@@ -417,13 +475,14 @@ class ProfileController extends BaseController {
   int get dailyLimit {
     // Subscribed users have unlimited
     if (isSubscribed) return 999;
-    
+
     final currentUser = user.value;
-    final isInTrial = currentUser != null && FreeTrialUtils.isWithinFreeTrial(currentUser);
-    
+    final isInTrial = currentUser != null &&
+        FreeTrialUtils.isWithinFreeTrial(currentUser);
+
     // If in free trial, return unlimited indicator
     if (isInTrial) return 999;
-    
+
     return AppConfig.freeDailyLimit;
   }
 
@@ -464,7 +523,8 @@ class ProfileController extends BaseController {
   String? get profileImageUrl => user.value?.profileImageUrl;
 
   /// Check if user has profile image
-  bool get hasProfileImage => profileImageUrl != null && profileImageUrl!.isNotEmpty;
+  bool get hasProfileImage =>
+      profileImageUrl != null && profileImageUrl!.isNotEmpty;
 
   /// Get current image index (0 = avatar, 1 = profile image)
   /// Defaults to profile image if available, otherwise avatar
